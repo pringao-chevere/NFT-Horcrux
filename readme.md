@@ -34,7 +34,7 @@ This transaction will fail if you haven't primed it properly, but no such check 
 
 If you do use the latter and you have primed the contract, then it will still work fine.
 
-### Step 3. Tokenise
+### Step 3. tokenise
 
 Last call the `Tokenise` function on the Tokeniser contract:
 
