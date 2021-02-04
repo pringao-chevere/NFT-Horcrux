@@ -24,7 +24,7 @@ This tells the contract you're about to deposit a specific NFT from your current
 
 ### Step 2. SafeTransferFrom
 
-Next, transfer the NFT to the Tokeniser contract using `SafeTransferFrom`:
+Next, transfer the NFT to the Tokeniser contract using `safeTransferFrom`:
 
 ```
 function safeTransferFrom(address _from, address _to, uint256 _tokenId, bytes memory data) public
@@ -34,7 +34,7 @@ This transaction will fail if you haven't primed it properly, but no such check 
 
 If you do use the latter and you have primed the contract, then it will still work fine.
 
-### Step 3. Tokensise
+### Step 3. Tokenise
 
 Last call the `Tokenise` function on the Tokeniser contract:
 
