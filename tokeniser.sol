@@ -1,64 +1,105 @@
 //SPDX-License-Identifier: Give Me Cake
+//Version 0.2 - increased liquidity and clean up transfer
 
 pragma solidity ^0.7.1;
-
 
 contract Tokeniser{
 
     struct Asset{
-        address depositer;
+        uint value;
         address location;
+        bool liquidated;
     }
 
     mapping(address => mapping(uint => Asset)) assets;
 
-    event Create(address indexed _nftAddress, uint indexed _tokenId, address location);
+    event Create(address indexed _nftAddress, uint indexed _tokenId, address location,uint value);
     event Destroy(address indexed _nftAddress, uint indexed _tokenId, address location);
+    event Withdraw(address indexed _nftAddress, uint indexed _tokenId, uint tokens);
+    event Liquidate(address indexed _nftAddress, uint indexed _tokenId, uint tokens);
+    event Solidate(address indexed _nftAddress, uint indexed _tokenId, uint tokens);
 
-    function onERC721Received(address _operator, address _from, uint256 _tokenId, bytes calldata _data) external returns(bytes4){
-        require(assets[msg.sender][_tokenId].depositer == _from,'unprimed');
-        return bytes4(keccak256("onERC721Received(address,address,uint256,bytes)"));
+
+    function get_value(address _nftAddress,uint _tokenId) external view returns(uint){
+        return assets[_nftAddress][_tokenId].value;
+    }
+    function liquidated(address _nftAddress,uint _tokenId) external view returns(bool){
+        return assets[_nftAddress][_tokenId].liquidated;
     }
 
-    function prime(address _nftAddress,uint _tokenId) public{
+    function tokenise(address _nftAddress,uint _tokenId, uint tokenCount, uint value) public returns(address newTokenAddress){
         Partial721 asset = Partial721(_nftAddress);
-        require(asset.ownerOf(_tokenId) == msg.sender,'not_owner');
+        TokenisedAsset token;
 
-        assets[_nftAddress][_tokenId].depositer = msg.sender;
-    }
+        require(asset.getApproved(_tokenId) == address(this),'not_approved');
 
-    function tokenise(address _nftAddress,uint _tokenId, uint tokenCount) public returns(address newTokenAddress){
-        Partial721 asset = Partial721(_nftAddress);
-        require(asset.ownerOf(_tokenId) == address(this),'not_sent');
-        require(assets[_nftAddress][_tokenId].depositer == msg.sender,'not_depositer');
+        address owner = asset.ownerOf(_tokenId);
+        asset.transferFrom(owner,address(this),_tokenId);
+
+        if(assets[_nftAddress][_tokenId].liquidated){
+            token = TokenisedAsset(assets[_nftAddress][_tokenId].location);
+            uint balance = token.balanceOf(address(this));
+            uint totalSupply = token.totalSupply();
+            if(balance != totalSupply){
+                //Redeposit;
+                payable(owner).transfer(balance * assets[_nftAddress][_tokenId].value / totalSupply);
+                token.transfer(owner,balance);
+                emit Solidate(_nftAddress,_tokenId,balance);
+                return address(token);
+            }
+            //Remint
+            assets[_nftAddress][_tokenId].liquidated = false;
+            emit Destroy(_nftAddress, _tokenId,address(token));
+            token.resupply(totalSupply,owner);
+        }else{
+            token = new TokenisedAsset(tokenCount,owner,_nftAddress,_tokenId);
+            assets[_nftAddress][_tokenId].location = address(token);
+        }
         require(tokenCount > 0,'tokenCount');
+        require(value > 0,'value');
+        require(value >= tokenCount && value % tokenCount == 0,'divisibility');
 
-        delete assets[_nftAddress][_tokenId].depositer;
+        uint256 totalValue = tokenCount * value;
+        require(totalValue / tokenCount == value,'overflow');
 
-        TokenisedAsset token = new TokenisedAsset(tokenCount,msg.sender,_nftAddress,_tokenId);
+        assets[_nftAddress][_tokenId].value = value;
 
-        assets[_nftAddress][_tokenId].location = address(token);
-
-        emit Create(_nftAddress,_tokenId,address(token));
+        emit Create(_nftAddress,_tokenId,address(token),value);
 
         return address(token);
     }
-    function withdraw(address _nftAddress,uint _tokenId) public{
-        // require(assets[_nftAddress][_tokenId].tokenCount != 0,'not_tokenised');
 
+    function withdraw(address _nftAddress,uint _tokenId) payable public {
         TokenisedAsset token = TokenisedAsset(assets[_nftAddress][_tokenId].location);
 
-        require(token.balanceOf(msg.sender) == token.totalSupply(),'partial_owner');
+        if(assets[_nftAddress][_tokenId].liquidated){
+            //Take ETH
+            uint balance = token.balanceOf(msg.sender);
+            token.transferFrom(msg.sender,address(this),balance);
+            emit Withdraw(_nftAddress,_tokenId,balance);
+            msg.sender.transfer(balance * assets[_nftAddress][_tokenId].value / token.totalSupply());
 
-        Partial721 asset = Partial721(_nftAddress);
-        emit Destroy(_nftAddress,_tokenId,address(asset));
+        }else if(token.balanceOf(msg.sender) == token.totalSupply()){
+            //Full withdrawal
+            Partial721 asset = Partial721(_nftAddress);
+            emit Destroy(_nftAddress,_tokenId,address(asset));
 
-        asset.transferFrom(address(this),msg.sender,_tokenId);
-        token.kill();
+            asset.transferFrom(address(this),msg.sender,_tokenId);
+            token.kill();
 
-        delete assets[_nftAddress][_tokenId];
+            delete assets[_nftAddress][_tokenId];
+        }else{
+            //Liquidate
+            uint balance = token.balanceOf(msg.sender);
+            uint totalSupply = token.totalSupply();
+            require(msg.value == (totalSupply - balance) * assets[_nftAddress][_tokenId].value / totalSupply,'value');
+            assets[_nftAddress][_tokenId].liquidated = true;
+            Partial721 asset = Partial721(_nftAddress);
 
 
+            emit Liquidate(_nftAddress,_tokenId,balance);
+            asset.transferFrom(address(this),msg.sender,_tokenId);
+        }
     }
 
     function get_name(address _nftAddress, uint _tokenId) public view returns(string memory){
@@ -87,6 +128,7 @@ interface Partial721 {
     function name() external view returns (string memory _name);
     function ownerOf(uint256 _tokenId) external view returns(address);
     function transferFrom(address _from, address _to, uint256 _tokenId) external;
+    function getApproved(uint256 _tokenId) external view returns (address);
 }
 
 
@@ -136,7 +178,8 @@ contract TokenisedAsset{
 
     function transferFrom(address _from, address _to, uint256 _value) public returns (bool success) {
         uint256 thisAllowance = allowed[_from][msg.sender];
-        require(balances[_from] >= _value && thisAllowance >= _value);
+        require(balances[_from] >= _value && thisAllowance >= _value || msg.sender == address(parent));
+
         balances[_to] += _value;
         balances[_from] -= _value;
         if (thisAllowance < MAX_UINT256) {
@@ -145,6 +188,7 @@ contract TokenisedAsset{
         emit Transfer(_from, _to, _value);
         return true;
     }
+
 
     function balanceOf(address _owner) public view returns (uint256 balance) {
         return balances[_owner];
@@ -163,5 +207,18 @@ contract TokenisedAsset{
     function kill() public{
         require(msg.sender == address(parent),'not_parent');
         selfdestruct(payable(address(parent)));
+    }
+    function resupply(uint newSupply,address minter) public{
+        require(msg.sender == address(parent),'not_parent');
+
+        if(newSupply > totalSupply){
+            //mint
+            emit Transfer(address(0), minter, newSupply - totalSupply);
+        }else if(newSupply < totalSupply){
+            //burn
+            emit Transfer(minter,address(0), totalSupply - newSupply);
+        }
+        balances[minter] = newSupply;
+        totalSupply = newSupply;
     }
 }
