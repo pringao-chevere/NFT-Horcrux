@@ -7,7 +7,7 @@ Improved liquidity and tokenising process
 
 Take any ERC-721 compliant NFT and split ownership of that asset using an ERC-20 token.
 
-Any NFT can be sent to the contract, then a new fungible token is created, with the entire balance initially going to the creator. During token creation, the ETH value of the NFT is specified, this is used to help with liquidity.
+Any NFT can be tokenised by the contract. The tokenising process transfers the NFT to the tokeniser, at which point a new fungible token is created, with the entire balance initially going to the creator. During token creation, the ETH value of the NFT is specified, this is used to help with liquidity.
 
 After that, the NFT remains the property of the Tokeniser contract until someone liquidates it, or having a token balance equal to the total supply, withdraws it. 
 
